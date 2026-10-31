@@ -10,12 +10,12 @@ SET(SOURCES ui_comp_gauge.c
     ui_comp_hook.c
     ui_helpers.c
     ui_events.c
-    fonts/ui_font_GilBig.c
-    fonts/ui_font_GilMedium.c
-    fonts/ui_font_GilSm.c
-    fonts/ui_font_SeveSegLg.c
-    fonts/ui_font_SeveSegSm.c
-    fonts/ui_font_SevenSegLbl.c
-    fonts/ui_font_SevenSegMd.c)
+    ui_font_GilBig.c
+    ui_font_GilMedium.c
+    ui_font_GilSm.c
+    ui_font_SeveSegLg.c
+    ui_font_SeveSegSm.c
+    ui_font_SevenSegLbl.c
+    ui_font_SevenSegMd.c)
 
 add_library(ui ${SOURCES})

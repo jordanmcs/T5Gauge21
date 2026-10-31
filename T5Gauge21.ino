@@ -30,25 +30,29 @@ struct SensorData {
 
 std::map<String, float> sensorMap;
 
+#include "LogSystem.h"
+
+// --- LogSystem glue ---
+float sensorValueFor(const char* id) {
+  auto it = sensorMap.find(String(id));
+  return (it != sensorMap.end()) ? it->second : 0.0f;
+}
+void logFeed(const char* id, float v) {      // playback -> same path as live
+  String k(id);
+  sensorMap[k] = v;
+  updatePeaks(v, k);
+  updateDisplay();
+}
+
+
 float peakAirTemp = -10.0f;       // initialize with very low value
 float peakBoostPressure = -1.0f;  // same here
 
 bool newDataAvailable = false;
 char jsonBuffer[256];
-lv_anim_t blinkAnim;
 
 
 
-
-
-void blink_cb(void* obj, int32_t v) {
-  lv_obj_t* panel = static_cast<lv_obj_t*>(obj);
-  if (v % 2 == 0) {
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_HIDDEN);  // Show
-  } else {
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);  // Hide
-  }
-}
 void startBlink(lv_obj_t* obj) {
   static lv_anim_t blinkAnim;
   lv_anim_init(&blinkAnim);
@@ -66,7 +70,7 @@ void startBlink(lv_obj_t* obj) {
 }
 
 void stopBlink(lv_obj_t* obj) {
-  lv_anim_del(obj, blink_cb);
+  lv_anim_del(obj, nullptr);  // remove opacity animation (exec_cb was a lambda in startBlink)
   lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);  // Ensure hidden when stopping
 }
 
@@ -145,7 +149,7 @@ void updateDisplay() {
       lv_arc_set_value(ui_ThrottleArc, value);  // e.g., 0–100%
     }
 
-    if (id == "AD_Sond" && ui_LambdaArc) {
+    if (id == "AD_sond" && ui_LambdaArc) {
       lv_arc_set_value(ui_LambdaArc, value);  // e.g., convert 0.95 → 95
     }
     if (id == "TQ") {
@@ -198,8 +202,12 @@ void printSensorMap() {
 }
 
 void onReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* incomingData, int len) {
-  memcpy(jsonBuffer, incomingData, sizeof(jsonBuffer));  // copy incoming data to ESPNowData
-  jsonBuffer[len] = '\0';                                // Null-terminate the string
+  if (!incomingData || len <= 0) return;
+  if (LogSystem_playbackActive()) return;  // playback owns the gauge
+  size_t copyLen = (size_t)len;
+  if (copyLen >= sizeof(jsonBuffer)) copyLen = sizeof(jsonBuffer) - 1;
+  memcpy(jsonBuffer, incomingData, copyLen);
+  jsonBuffer[copyLen] = '\0';
   newDataAvailable = true;
 }
 void processJSON(const char* jsonString) {
@@ -220,6 +228,7 @@ void processJSON(const char* jsonString) {
     printSensorMap();
     updatePeaks(value, id);
   }
+  rec_sample();  // CSV row if recording (live data only)
 }
 
 
@@ -253,6 +262,8 @@ void setup() {
 
   // set 100% to start
   Set_Backlight(100);
+
+  LogSystem_init(logFeed);  // adds LOG button to dash screen
 
 
   // set label bindings for incoming JSON messages
@@ -290,6 +301,7 @@ const unsigned long updateInterval = 50;  // ms
 
 void loop() {
   Lvgl_Loop();
+  LogSystem_tick();
 
   unsigned long now = millis();
   if (newDataAvailable && (now - lastUpdate >= updateInterval)) {
