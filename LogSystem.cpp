@@ -41,10 +41,13 @@ static const char* SDROOT = "/sdcard";
 // ---------------- state ----------------
 static LogFeedFn feedFn = nullptr;
 static lv_obj_t* scr = NULL, * fileList = NULL, * statusLbl = NULL, * progLbl = NULL;
-static lv_obj_t* recLbl = NULL, * playLbl = NULL, * speedLbl = NULL, * delLbl = NULL;
+static lv_obj_t* mainBtn = NULL, * mainLbl = NULL, * speedBtn = NULL;
+static lv_obj_t* speedLbl = NULL, * delLbl = NULL;
+static void update_main_btn();   // fwd: lives in UI section, called by rec/play fns
 
 enum Mode { MODE_IDLE, MODE_REC, MODE_PLAY };
 static Mode mode = MODE_IDLE;
+static uint32_t lastLiveMs = 0;             // last ESP-NOW ingest (via rec_sample)
 static bool sdReady = false;
 
 // recorder
@@ -177,10 +180,16 @@ static void list_dir(const char* dir, const char* prefix) {
 static void rec_stop() {
   if (recFile) { recFile.flush(); recFile.close(); }
   mode = MODE_IDLE;
-  lv_label_set_text(recLbl, "REC");
+  update_main_btn();
 }
 
 static bool rec_start() {
+  // refuse to "record" without a live stream — otherwise we silently write a
+  // header-only file that looks like a successful capture
+  if (!lastLiveMs || millis() - lastLiveMs > 2000) {
+    setStatus("NO LIVE DATA");
+    return false;
+  }
   if (!sd_mount()) { setStatus("No SD card"); return false; }
   datetime_t dt; PCF85063_Read_Time(&dt);
   printf("[LOG] RTC %04d-%02d-%02d %02d:%02d:%02d\n",
@@ -213,13 +222,14 @@ static bool rec_start() {
   recFile.println();
   recStartMs = millis();
   mode = MODE_REC;
-  lv_label_set_text(recLbl, "STOP");
+  update_main_btn();
   char msg[80]; snprintf(msg, sizeof(msg), "Recording %s", strrchr(name, '/') + 1);
   setStatus(msg);
   return true;
 }
 
 void rec_sample() {                       // called from processJSON (live only)
+  lastLiveMs = millis();
   if (mode != MODE_REC || !recFile) return;
   recFile.printf("%.4f", (millis() - recStartMs) / 1000.0f);
   for (int i = 0; i < N_SYM; i++)
@@ -250,7 +260,7 @@ static bool play_loadRow();   // fwd (defined below)
 static void play_stop(const char* why) {
   if (playFile) playFile.close();
   mode = MODE_IDLE; rowLoaded = false;
-  lv_label_set_text(playLbl, "PLAY");
+  update_main_btn();
   setStatus(why);
 }
 
@@ -264,7 +274,7 @@ static bool play_start() {
   playT0ms = 0; playFirstRow = true;   // anchor pacing to FIRST row's timestamp
   play_loadRow();                    // preload first row; feeds at its timestamp
   mode = MODE_PLAY;
-  lv_label_set_text(playLbl, "STOP");
+  update_main_btn();
   setStatus(files[selFile].disp);
   lv_scr_load(ui_DashDisplay);      // play back on the live gauge screen
   return true;
@@ -348,14 +358,31 @@ static void refresh_files() {
   }
   if (nFiles == 0) lv_list_add_text(fileList, "no csv files");
   setStatus(sdReady ? "Tap file, then PLAY" : "No SD card");
+  update_main_btn();
 }
-static void rec_cb(lv_event_t*) {
-  if (mode == MODE_REC)       { rec_stop(); refresh_files(); setStatus("Saved"); }
-  else if (mode == MODE_IDLE) rec_start();
+// one button does REC or PLAY (or STOP while busy); speed shows with a selection
+static void update_main_btn() {
+  if (!mainBtn) return;
+  if (mode == MODE_IDLE && selFile >= 0) {
+    lv_label_set_text(mainLbl, "PLAY");
+    lv_obj_set_style_bg_color(mainBtn, lv_color_hex(0x1b7a33), 0);
+  } else if (mode == MODE_IDLE) {
+    lv_label_set_text(mainLbl, "REC");
+    lv_obj_set_style_bg_color(mainBtn, lv_color_hex(0x3a3a3c), 0);
+  } else {  // busy recording/playing -> STOP
+    lv_label_set_text(mainLbl, "STOP");
+    lv_obj_set_style_bg_color(mainBtn, lv_color_hex(0xb3261e), 0);
+  }
+  if (speedBtn) {
+    if (mode == MODE_IDLE && selFile >= 0) lv_obj_clear_flag(speedBtn, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(speedBtn, LV_OBJ_FLAG_HIDDEN);
+  }
 }
-static void play_cb(lv_event_t*) {
-  if (mode == MODE_PLAY)  play_stop("Stopped");
-  else if (mode == MODE_IDLE) play_start();
+static void main_cb(lv_event_t*) {
+  if (mode == MODE_IDLE) {
+    if (selFile >= 0) play_start(); else rec_start();
+  } else if (mode == MODE_REC)  { rec_stop(); refresh_files(); setStatus("Saved"); }
+  else if (mode == MODE_PLAY)   play_stop("Stopped");
 }
 static void speed_cb(lv_event_t*) {
   speed = (speed == 1) ? 2 : (speed == 2) ? 4 : 1;
@@ -413,6 +440,7 @@ static void open_cb(lv_event_t*) {
     lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 24);
 
     statusLbl = lv_label_create(scr);
+    lv_label_set_text(statusLbl, "");
     lv_obj_align(statusLbl, LV_ALIGN_TOP_MID, 0, 48);
 
     fileList = lv_list_create(scr);
@@ -421,16 +449,17 @@ static void open_cb(lv_event_t*) {
     lv_obj_set_style_text_font(fileList, &lv_font_montserrat_16, 0);
 
     progLbl = lv_label_create(scr);
+    lv_label_set_text(progLbl, "");
     lv_obj_align(progLbl, LV_ALIGN_CENTER, 0, 118);
 
-    lv_obj_t* b = mkBtn(scr, 84, 44, "REC", rec_cb, &recLbl);
-    lv_obj_align(b, LV_ALIGN_BOTTOM_MID, -128, -64);
-    b = mkBtn(scr, 84, 44, "PLAY", play_cb, &playLbl);
-    lv_obj_align(b, LV_ALIGN_BOTTOM_MID, -36, -64);
-    b = mkBtn(scr, 60, 44, "1x", speed_cb, &speedLbl);
-    lv_obj_align(b, LV_ALIGN_BOTTOM_MID, 52, -64);
-    b = mkBtn(scr, 56, 44, "DEL", del_cb, &delLbl);
-    lv_obj_align(b, LV_ALIGN_BOTTOM_MID, 128, -64);
+    mainBtn = mkBtn(scr, 90, 44, "REC", main_cb, &mainLbl);
+    lv_obj_align(mainBtn, LV_ALIGN_BOTTOM_MID, -108, -64);
+    speedBtn = mkBtn(scr, 60, 44, "1x", speed_cb, &speedLbl);
+    lv_obj_align(speedBtn, LV_ALIGN_BOTTOM_MID, 6, -64);
+    delLbl = NULL;
+    lv_obj_t* b = mkBtn(scr, 60, 44, "DEL", del_cb, &delLbl);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0xb3261e), 0);
+    lv_obj_align(b, LV_ALIGN_BOTTOM_MID, 86, -64);
     b = mkBtn(scr, 70, 40, "BACK", back_cb, NULL);
     lv_obj_align(b, LV_ALIGN_BOTTOM_MID, 0, -4);
   }
@@ -442,11 +471,13 @@ static void open_cb(lv_event_t*) {
 // ---------------- public ----------------
 void LogSystem_init(LogFeedFn feed) {
   feedFn = feed;
-  lv_obj_t* entry = lv_btn_create(ui_DashDisplay);   // survives SquareLine regen
-  lv_obj_set_size(entry, 70, 34);
-  lv_obj_align(entry, LV_ALIGN_TOP_MID, 0, 6);
+  // LOGGER entry lives on the Settings screen (survives SquareLine regen
+  // because it is created here, not in the generated code)
+  lv_obj_t* entry = lv_btn_create(ui_SettingsScr);
+  lv_obj_set_size(entry, 120, 46);
+  lv_obj_align(entry, LV_ALIGN_CENTER, 0, 210);
   lv_obj_t* l = lv_label_create(entry);
-  lv_label_set_text(l, "LOG");
+  lv_label_set_text(l, "LOGGER");
   lv_obj_center(l);
   lv_obj_add_event_cb(entry, open_cb, LV_EVENT_CLICKED, NULL);
 }
@@ -481,5 +512,5 @@ const char* LogSystem_testStatus() { static char s[128];
   snprintf(s, sizeof(s), "mode=%d sel=%d lbl=%s", mode, selFile,
            statusLbl ? lv_label_get_text(statusLbl) : "?"); return s; }
 void LogSystem_testOpen()  { open_cb(NULL); }
-void LogSystem_testRec()   { rec_cb(NULL); }
-void LogSystem_testPlay(int idx) { if (idx >= 0) { selFile = idx; } play_cb(NULL); }
+void LogSystem_testRec()   { if (mode == MODE_IDLE) selFile = -1; if (mode != MODE_PLAY) main_cb(NULL); }
+void LogSystem_testPlay(int idx) { if (mode == MODE_IDLE && idx >= 0) { selFile = idx; main_cb(NULL); } }

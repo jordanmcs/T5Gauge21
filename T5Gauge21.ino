@@ -263,7 +263,7 @@ void setup() {
   // set 100% to start
   Set_Backlight(100);
 
-  LogSystem_init(logFeed);  // adds LOG button to dash screen
+  LogSystem_init(logFeed);  // adds LOGGER button to Settings screen
 
 
   // set label bindings for incoming JSON messages
