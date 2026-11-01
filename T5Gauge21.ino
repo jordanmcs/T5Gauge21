@@ -31,15 +31,21 @@ struct SensorData {
 std::map<String, float> sensorMap;
 
 #include "LogSystem.h"
+#include "FuelEdu.h"
 
 // --- LogSystem glue ---
 float sensorValueFor(const char* id) {
   auto it = sensorMap.find(String(id));
   return (it != sensorMap.end()) ? it->second : 0.0f;
 }
+
+// Freshness clock for FuelEdu: set by BOTH live and playback ingest.
+unsigned long lastDataMs = 0;
+
 void logFeed(const char* id, float v) {      // playback -> same path as live
   String k(id);
   sensorMap[k] = v;
+  lastDataMs = millis();
   updatePeaks(v, k);
   updateDisplay();
 }
@@ -189,6 +195,20 @@ void updateDisplay() {
   updatePeakLabels();
 }
 
+// Wipe every data label to "--" so a page that no log/live frame feeds can
+// never show its SquareLine design-time placeholder ("13.6", "12.7", "7:23")
+// as if it were a reading. Called on playback start; unit labels are left.
+void clearDisplayPlaceholders(void) {
+  lv_obj_t* lbls[] = {
+    ui_rpmLbl, ui_aitValLbl, ui_boostValLbl, ui_speedLbl,
+    uic_tach_value, uic_voltmeter_value, uic_cts_value, uic_ait_value,
+    uic_lambda_value, uic_boost_value, uic_ignition_value, uic_throttle_value,
+    uic_speed_value, uic_speed_name, uic_torque_value, uic_APC_value,
+  };
+  for (unsigned i = 0; i < sizeof(lbls) / sizeof(lbls[0]); i++)
+    if (lbls[i]) lv_label_set_text(lbls[i], "--");
+}
+
 //temp for debugging
 void printSensorMap() {
   Serial.println("=== Sensor Map ===");
@@ -223,6 +243,7 @@ void processJSON(const char* jsonString) {
     String id = kv.key().c_str();
     float value = kv.value().as<float>();
     sensorMap[id] = value;  // Insert or update
+    lastDataMs = millis();  // FuelEdu freshness
 
     updateDisplay();
     printSensorMap();
@@ -264,6 +285,7 @@ void setup() {
   Set_Backlight(100);
 
   LogSystem_init(logFeed);  // adds LOGGER button to Settings screen
+  FuelEdu_init();           // appends "mpg" swipe page after the clock
 
 
   // set label bindings for incoming JSON messages
@@ -286,7 +308,7 @@ void setup() {
   labelBindings["Bil_hast"].valueLabels.push_back(uic_speed_value);       //single display
   labelBindings["Gear"].valueLabels.push_back(uic_speed_name);            //single display
   labelBindings["TQ"].valueLabels.push_back(uic_torque_value);            //single display
-  labelBindings["APC"].valueLabels.push_back(uic_APC_value);              //single display
+  labelBindings["PWM_ut10"].valueLabels.push_back(uic_APC_value);         //single display — interpreter sends symbolId "PWM_ut10", not "APC"
 
 
 
@@ -302,6 +324,7 @@ const unsigned long updateInterval = 50;  // ms
 void loop() {
   Lvgl_Loop();
   LogSystem_tick();
+  FuelEdu_tick(millis());
 
   unsigned long now = millis();
   if (newDataAvailable && (now - lastUpdate >= updateInterval)) {

@@ -94,7 +94,7 @@ lv_label_set_text(ui_comp_get_child(ui_boost, UI_COMP_GAUGE_NAME),"BOOST");
 
 lv_label_set_text(ui_comp_get_child(ui_boost, UI_COMP_GAUGE_VALUE),"0.8");
 
-lv_label_set_text(ui_comp_get_child(ui_boost, UI_COMP_GAUGE_UNIT),"BAR");
+lv_label_set_text(ui_comp_get_child(ui_boost, UI_COMP_GAUGE_UNIT),"kPa");
 
 ui_cts = ui_Gauge_create(ui_SingleScr);
 lv_obj_set_x( ui_cts, 124 );

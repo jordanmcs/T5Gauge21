@@ -14,9 +14,10 @@
 
 // ---------------- configuration ----------------
 // Logged set = current display parameters (labelBindings in T5Gauge21.ino)
+// + Insptid_ms10: not displayed raw, feeds the FuelEdu trip computer
 static const char* LOG_SYMBOLS[] = {
   "Rpm", "Bil_hast", "P_manifold", "Kyl_temp", "Lufttemp", "Batt_volt",
-  "AD_sond", "Ign_angle", "Medeltrot", "Gear", "TQ", "APC"
+  "AD_sond", "Ign_angle", "Medeltrot", "Gear", "TQ", "PWM_ut10", "Insptid_ms10"
 };
 static const int N_SYM = sizeof(LOG_SYMBOLS) / sizeof(LOG_SYMBOLS[0]);
 
@@ -31,7 +32,8 @@ static const Remap REMAP[] = {
   { "ActualIn.T_AirInlet","Lufttemp",   1, 0     },
   { "Out.X_AccPedal",     "Medeltrot",  1, 0     },
   { "Out.fi_Ignition",    "Ign_angle",  1, 0     },
-  { "Out.PWM_BoostCntrl", "APC",        1, 0     },
+  { "Out.PWM_BoostCntrl", "PWM_ut10", 1, 0   },   // canonical name = interpreter symbolId
+  { "APC",            "PWM_ut10", 1, 0   },   // gauge-logs recorded before the rename
 };
 static const int N_REMAP = sizeof(REMAP) / sizeof(REMAP[0]);
 static const int MAXCOLS = 40;
@@ -264,12 +266,21 @@ static void play_stop(const char* why) {
   setStatus(why);
 }
 
+// FuelEdu trip reset — playback must start from a clean prior so bench/test
+// logs can't pollute the real driving trip. Declared here (not via FuelEdu.h)
+// to keep LogSystem independent of the EDU UI module.
+void FuelEdu_resetTrip(void);
+// Blanks design-time placeholder values on all data pages (T5Gauge21.ino)
+void clearDisplayPlaceholders(void);
+
 static bool play_start() {
   if (selFile < 0 || selFile >= nFiles) { setStatus("Select a file first"); return false; }
   if (!sd_mount()) { setStatus("No SD card"); return false; }
   playFile = SD_MMC.open(files[selFile].path, FILE_READ);
   if (!playFile) { setStatus("Open failed"); return false; }
   if (!hdr_read()) { playFile.close(); setStatus("Bad CSV header"); return false; }
+  FuelEdu_resetTrip();        // fresh prior for this playback
+  clearDisplayPlaceholders(); // "--" everywhere; only logged columns overwrite
   playStartMs = millis(); curDueMs = 0; rowLoaded = false;
   playT0ms = 0; playFirstRow = true;   // anchor pacing to FIRST row's timestamp
   play_loadRow();                    // preload first row; feeds at its timestamp
