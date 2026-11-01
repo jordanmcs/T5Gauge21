@@ -158,18 +158,9 @@ void updateDisplay() {
     if (id == "AD_sond" && ui_LambdaArc) {
       lv_arc_set_value(ui_LambdaArc, value);  // e.g., convert 0.95 → 95
     }
-    if (id == "TQ") {
-      const char* rpm_text = lv_label_get_text(uic_tach_value);  // Get text from label
-      int rpm = atoi(rpm_text);                                  // Convert to int
-
-      int hp = (int)((value * rpm) / 7120.0);  // Calculate horsepower
-
-      // Convert hp to string to set as label text
-      char hp_buffer[16];
-      snprintf(hp_buffer, sizeof(hp_buffer), "%d", hp);
-
-      lv_label_set_text(uic_torque_power, hp_buffer);
-    }
+    // NOTE: TQ is a torque-demand SCALAR (1..106, ~2x load percent), NOT Nm
+    // (wiki TQ page, 2026-11 RE) — hp = TQ x rpm / 7120 was computing fiction
+    // and is removed. Real hp needs a calibrated torque map; see vault note.
 
 
     // Show shift indicator if RPM > threshold

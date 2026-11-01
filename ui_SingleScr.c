@@ -202,7 +202,7 @@ lv_obj_set_style_text_font(ui_comp_get_child(ui_torque, UI_COMP_GAUGE_NAME), &ui
 lv_label_set_text(ui_comp_get_child(ui_torque, UI_COMP_GAUGE_VALUE),"0");
 lv_obj_set_style_text_font(ui_comp_get_child(ui_torque, UI_COMP_GAUGE_VALUE), &ui_font_SevenSegMd, LV_PART_MAIN| LV_STATE_DEFAULT);
 
-lv_label_set_text(ui_comp_get_child(ui_torque, UI_COMP_GAUGE_UNIT),"HP/Nm");
+lv_label_set_text(ui_comp_get_child(ui_torque, UI_COMP_GAUGE_UNIT),"TQ");
 
 ui_clock = ui_Gauge_create(ui_SingleScr);
 lv_obj_set_x( ui_clock, 124 );
