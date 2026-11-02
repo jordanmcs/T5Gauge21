@@ -270,6 +270,7 @@ static void play_stop(const char* why) {
 // write NVS, so bench/test logs can't pollute the real driving trip.
 // Declared here (not via FuelEdu.h) to keep LogSystem's includes light.
 void FuelEdu_beginSandbox(void);
+void FuelEdu_playSample(float rpm, float pwMs, float kmh);
 // Blanks design-time placeholder values on all data pages (T5Gauge21.ino)
 void clearDisplayPlaceholders(void);
 
@@ -331,6 +332,16 @@ static bool play_loadRow() {
 }
 static void play_emitRow() {
   for (int i = 0; i < rowN; i++) feedFn(rowSym[i].c_str(), rowVal[i]);
+  // Feed the mpg sandbox with the log's own numbers — display-only bank;
+  // live collection and NVS are untouched by playback.
+  float r = 0, p = 0, s = 0;
+  for (int i = 0; i < rowN; i++) {
+    const char* sym = rowSym[i].c_str();
+    if (!strcmp(sym, "Rpm")) r = rowVal[i];
+    else if (!strcmp(sym, "Insptid_ms10")) p = rowVal[i];
+    else if (!strcmp(sym, "Bil_hast")) s = rowVal[i];
+  }
+  FuelEdu_playSample(r, p, s);
   rowLoaded = false;
 }
 

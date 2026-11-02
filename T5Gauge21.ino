@@ -214,7 +214,8 @@ void printSensorMap() {
 
 void onReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* incomingData, int len) {
   if (!incomingData || len <= 0) return;
-  if (LogSystem_playbackActive()) return;  // playback owns the gauge
+  // Live ingest NEVER pauses for playback — every real frame still feeds the
+  // trip integrator (processJSON). Playback only takes over the display.
   size_t copyLen = (size_t)len;
   if (copyLen >= sizeof(jsonBuffer)) copyLen = sizeof(jsonBuffer) - 1;
   memcpy(jsonBuffer, incomingData, copyLen);
@@ -229,6 +230,14 @@ void processJSON(const char* jsonString) {
     Serial.println(error.f_str());
     return;
   }
+
+  // LIVE collection never stops, even while a log plays: the persisted trip
+  // integrates only real frames (containsKey — never mutates doc).
+  auto num = [&doc](const char* k) { return doc.containsKey(k) ? (float)doc[k] : 0.0f; };
+  FuelEdu_liveSample(num("Rpm"), num("Insptid_ms10"), num("Bil_hast"));
+
+  // Playback owns the display: don't paint over it, but collection is done.
+  if (LogSystem_playbackActive()) return;
 
   for (JsonPair kv : doc.as<JsonObject>()) {
     String id = kv.key().c_str();

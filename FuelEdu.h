@@ -14,11 +14,19 @@ void FuelEdu_init(void);
 void FuelEdu_tick(unsigned long nowMs);
 
 // Reseed the trip average to the prior (same as long-press on the avg line).
+// Resets the bank currently on screen: playback reset = RAM only, live reset persists.
 void FuelEdu_resetTrip(void);
 
-// Enter/exit playback sandbox: real trip is flushed to NVS, display gets a
-// fresh seeded session that never writes flash, and the real trip is restored
-// from NVS when playback stops.
+// Live sample hook: call from live ESP-NOW ingest with (Rpm, Insptid_ms10,
+// Bil_hast) on EVERY frame — including during playback. Feeds the persisted,
+// real trip.
+void FuelEdu_liveSample(float rpm, float pwMs, float kmh);
+
+// Playback hook: same triple from a log row; feeds the RAM-only sandbox bank
+// the display shows while playback runs. Never touches NVS.
+void FuelEdu_playSample(float rpm, float pwMs, float kmh);
+
+// Called when playback starts: sandbox restarts from a clean prior. RAM only.
 void FuelEdu_beginSandbox(void);
 
 #endif
