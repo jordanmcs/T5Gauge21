@@ -16,6 +16,8 @@
 #include "FuelEdu.h"
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
+#include <nvs.h>
 #include <ui.h>
 
 // ---- glue from T5Gauge21.ino --------------------------------------------
@@ -53,6 +55,67 @@ static int head = 0;
 static float sumGal = 0, sumMi = 0;
 static char lastVal[16] = "";
 static char lastAvg[24] = "";
+
+// ---- persistence (NVS): survive power-down; USB-powered gauge has no battery
+// Write cadence = one save per CELL_MI driven (cell rollover) or per reset —
+// a few writes per drive against ~100k+ NVS cycles, wear-levelled. A hard
+// power cut mid-quarter-mile loses at most that partial slice.
+#define NVS_NS       "fueltrip"
+#define NVS_KEY      "trip"
+#define TRIP_MAGIC   0x54525031u   // "TRP1"
+
+struct TripBlob {
+  uint32_t magic;
+  int32_t  head;
+  float    cGal[N_CELLS], cMi[N_CELLS];
+  float    sumGal, sumMi, tripMi;
+  uint32_t cksum;                 // additive over all preceding words
+};
+
+static uint32_t blobSum(const TripBlob& b) {
+  const uint32_t* w = (const uint32_t*)&b;
+  uint32_t s = 0;
+  size_t n = (offsetof(TripBlob, cksum)) / sizeof(uint32_t);
+  for (size_t i = 0; i < n; i++) s += w[i];
+  return s;
+}
+
+static float s_lastSaveTrip = -1.0f;
+
+static void tripSave(void) {
+  TripBlob b = {};
+  b.magic = TRIP_MAGIC;
+  b.head = head;
+  memcpy(b.cGal, cGal, sizeof(cGal));
+  memcpy(b.cMi, cMi, sizeof(cMi));
+  b.sumGal = sumGal; b.sumMi = sumMi; b.tripMi = s_tripMi;
+  b.cksum = blobSum(b);
+  nvs_handle_t h;
+  if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+    nvs_set_blob(h, NVS_KEY, &b, sizeof(b));
+    nvs_commit(h);
+    nvs_close(h);
+  }
+  s_lastSaveTrip = s_tripMi;
+}
+
+// returns true if a valid trip was restored
+static bool tripLoad(void) {
+  nvs_handle_t h;
+  if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+  TripBlob b;
+  size_t sz = sizeof(b);
+  bool ok = (nvs_get_blob(h, NVS_KEY, &b, &sz) == ESP_OK) && sz == sizeof(b) &&
+            b.magic == TRIP_MAGIC && b.cksum == blobSum(b) &&
+            b.head >= 0 && b.head < N_CELLS;
+  nvs_close(h);
+  if (!ok) return false;
+  head = b.head;
+  memcpy(cGal, b.cGal, sizeof(cGal));
+  memcpy(cMi, b.cMi, sizeof(cMi));
+  sumGal = b.sumGal; sumMi = b.sumMi; s_tripMi = b.tripMi;
+  return true;
+}
 
 static void seedRing(void) {
   sumGal = sumMi = 0;
@@ -104,6 +167,7 @@ static void avg_reset_cb(lv_event_t*) { FuelEdu_resetTrip(); }
 void FuelEdu_resetTrip(void) {
   seedRing();
   s_tripMi = 0;   // trip odometer resets with the avg window
+  tripSave();     // reset must survive the next power-down too
   // visible feedback: gold for 800 ms, one-shot timer restores theme green
   if (!avgLbl) return;
   lv_obj_set_style_text_color(avgLbl, lv_color_hex(0xDEB600), 0);
@@ -113,7 +177,7 @@ void FuelEdu_resetTrip(void) {
 // ---- page construction (mirrors ui_Gauge component geometry/fonts) ---------
 void FuelEdu_init(void) {
   if (!ui_SingleScr) return;
-  seedRing();
+  if (!tripLoad()) seedRing();   // restore across power-down, else fresh 24.0
 
   page = lv_obj_create(ui_SingleScr);
   lv_obj_remove_style_all(page);
@@ -210,8 +274,14 @@ void FuelEdu_tick(unsigned long nowMs) {
     const float galRate = C_FUEL_GALH * rpm * pw;   // gal/h, raw
     const float mph = kmh * 0.621371f;
     const float dMi = mph * (dtms / 3600000.0f);    // 0 when stopped
+    const int headBefore = head;
     ringAdd(galRate * (dtms / 3600000.0f), dMi);
     s_tripMi += dMi;
+    // persist once per completed cell / quarter mile of travel
+    if (headBefore != head ||
+        (s_lastSaveTrip < 0 ? s_tripMi >= 0.25f
+                            : s_tripMi - s_lastSaveTrip >= 0.25f))
+      tripSave();
 
     const float a = dtms / (TAU_MS + dtms);         // EMA, dt-correct
     galS = (galS < 0) ? galRate : galS + a * (galRate - galS);
