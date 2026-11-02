@@ -157,9 +157,9 @@ void FuelEdu_init(void) {
   avgLbl = lv_label_create(page);
   lv_obj_set_width(avgLbl, LV_SIZE_CONTENT);
   lv_obj_set_height(avgLbl, LV_SIZE_CONTENT);
-  lv_obj_set_y(avgLbl, 135);
+  lv_obj_set_y(avgLbl, 125);
   lv_obj_set_align(avgLbl, LV_ALIGN_CENTER);
-  lv_label_set_text(avgLbl, "avg 24.0");
+  lv_label_set_text(avgLbl, "24.0");
   lv_obj_clear_flag(avgLbl, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(avgLbl, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_pad_all(avgLbl, 14, 0);  // finger target inside round bezel
@@ -168,6 +168,17 @@ void FuelEdu_init(void) {
   lv_obj_set_style_text_font(avgLbl, &ui_font_SeveSegSm, 0);
   lv_obj_add_event_cb(avgLbl, avg_reset_cb, LV_EVENT_LONG_PRESSED, nullptr);
 
+  // unit tag for the trip line (avg needs none — page header says mpg)
+  lv_obj_t* miTag = lv_label_create(page);
+  lv_obj_set_width(miTag, LV_SIZE_CONTENT);
+  lv_obj_set_height(miTag, LV_SIZE_CONTENT);
+  lv_obj_set_x(miTag, 100);
+  lv_obj_set_y(miTag, 178);
+  lv_obj_set_align(miTag, LV_ALIGN_CENTER);
+  lv_label_set_text(miTag, "Mi");
+  lv_obj_set_style_text_color(miTag, lv_color_hex(0x808080), 0);
+  lv_obj_set_style_text_font(miTag, &ui_font_SeveSegSm, 0);
+
   // TRIP — miles since reset, gray, centered under avg. Long-press anywhere on
   // this page's avg resets it too.
   tripLbl = lv_label_create(page);
@@ -175,7 +186,7 @@ void FuelEdu_init(void) {
   lv_obj_set_height(tripLbl, LV_SIZE_CONTENT);
   lv_obj_set_y(tripLbl, 178);
   lv_obj_set_align(tripLbl, LV_ALIGN_CENTER);
-  lv_label_set_text(tripLbl, "trip 0.0");
+  lv_label_set_text(tripLbl, "0.0");
   lv_obj_clear_flag(tripLbl, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_text_color(tripLbl, lv_color_hex(0x808080), 0);
   lv_obj_set_style_text_font(tripLbl, &ui_font_SeveSegSm, 0);
@@ -224,7 +235,7 @@ void FuelEdu_tick(unsigned long nowMs) {
   float avgMpg = (avg > 1e-9f) ? 1.0f / avg : 99.9f;
   if (avgMpg > 99.9f) avgMpg = 99.9f;
   char ab[24];
-  snprintf(ab, sizeof(ab), "avg %.1f", avgMpg);
+  snprintf(ab, sizeof(ab), "%.1f", avgMpg);
   if (strcmp(ab, lastAvg) != 0) {
     lv_label_set_text(avgLbl, ab);
     snprintf(lastAvg, sizeof(lastAvg), "%s", ab);
@@ -233,8 +244,8 @@ void FuelEdu_tick(unsigned long nowMs) {
   // trip odometer: 0.1 mi resolution to 99.9, whole miles beyond
   static char lastTrip[24] = "";
   char tb[24];
-  if (s_tripMi < 100.0f) snprintf(tb, sizeof(tb), "trip %.1f", s_tripMi);
-  else                   snprintf(tb, sizeof(tb), "trip %.0f", s_tripMi);
+  if (s_tripMi < 100.0f) snprintf(tb, sizeof(tb), "%.1f", s_tripMi);
+  else                   snprintf(tb, sizeof(tb), "%.0f", s_tripMi);
   if (strcmp(tb, lastTrip) != 0) {
     lv_label_set_text(tripLbl, tb);
     snprintf(lastTrip, sizeof(lastTrip), "%s", tb);
