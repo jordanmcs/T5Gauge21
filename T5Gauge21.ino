@@ -265,6 +265,45 @@ void WiFi_init(void) {
 }
 
 
+// ---- Settings-page wiring (runtime — SquareLine-regen-safe) ----------------
+// The generated ui_events.c stubs (toggleNightMode etc.) come back empty on
+// every SquareLine export, so real behaviour lives HERE and is attached to
+// the switches directly — same precedent as LogSystem's LOGGER button.
+#include <nvs.h>
+#define BL_DAY    100  // current behaviour
+#define BL_NIGHT   25  // first guess — Jordan tunes by eye
+
+static void nightSave(bool night) {
+  nvs_handle_t h;
+  if (nvs_open("ui", NVS_READWRITE, &h) == ESP_OK) {
+    nvs_set_u8(h, "night", night ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+  }
+}
+
+static void night_cb(lv_event_t*) {
+  const bool night = lv_obj_has_state(ui_nightMode, LV_STATE_CHECKED);
+  Set_Backlight(night ? BL_NIGHT : BL_DAY);
+  nightSave(night);
+}
+
+static void settingsWiring_init(void) {
+  if (!ui_nightMode) return;
+  nvs_handle_t h;
+  uint8_t night = 0;
+  if (nvs_open("ui", NVS_READONLY, &h) == ESP_OK) {
+    nvs_get_u8(h, "night", &night);
+    nvs_close(h);
+  }
+  // restore BEFORE attaching the cb so boot doesn't re-save
+  if (night) {
+    lv_obj_add_state(ui_nightMode, LV_STATE_CHECKED);
+    Set_Backlight(BL_NIGHT);
+  }
+  lv_obj_add_event_cb(ui_nightMode, night_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+}
+
 void setup() {
   //   pinMode(BACKLIGHT_PIN, OUTPUT);
   //digitalWrite(BACKLIGHT_PIN, HIGH);  // turn on backlight
@@ -284,6 +323,7 @@ void setup() {
   // set 100% to start
   Set_Backlight(100);
 
+  settingsWiring_init();  // Day/Night switch (may dim per saved setting)
   LogSystem_init(logFeed);  // adds LOGGER button to Settings screen
   FuelEdu_init();           // appends "mpg" swipe page after the clock
 
