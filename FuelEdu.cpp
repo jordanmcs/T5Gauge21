@@ -23,8 +23,11 @@ extern float sensorValueFor(const char* id);
 extern unsigned long lastDataMs;  // last live/playback ingest (millis)
 
 // ---- tunables -------------------------------------------------------------
-#define C_FUEL_GALH  1.8e-4f   // gal_h = C x rpm x pw_ms — PUMP-CALIBRATED constant
-                               // (scale by actual_gal/computed_gal over 2-3 refills)
+// Fuel: B202 4-cyl with Bosch 0280155968 "Green Giant" 42 lb/hr (440cc) —
+// C = 4 cyl x 42 lb/hr / (120 x 1000 x 6.3 lb/gal), flow at 3.0 bar (43.5 psi).
+// Refine from a real fill-up (scale by actual_gal/computed_gal); see vault
+// "ECU test mule". If regulator pressure differs from 3 bar, scale by sqrt(P/3bar).
+#define C_FUEL_GALH  2.222e-4f // gal_h = C x rpm x pw_ms
 #define AVG_SEED_MPG 24.0f     // average shown right after reset / refill
 #define N_CELLS      64        // window = 64 cells x 0.25 mi = 16 miles
 #define CELL_MI      0.25f     // resolution of the rolling window
