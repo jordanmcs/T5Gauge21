@@ -7,6 +7,7 @@
 #include <vector>
 #include <Preferences.h>  //esp32 stores in non-volitle memory
 #include <ui.h>
+#include "VdoFace.h"      // types needed before auto-prototypes (mid-file include breaks)
 //#include "globals.h"
 
 Preferences prefs;
@@ -337,6 +338,99 @@ void WiFi_init(void) {
 }
 
 
+// ---- Analog (VDO) style (settings "Digital|Analog" switch) -----------------
+// Analog mode overlays ui_DashDisplay with VDO Vision-style dials (engine
+// ported from the T5Gauge185 face work), one symbol per screen. The overlay
+// is a child of ui_DashDisplay on purpose: every generated SquareLine
+// navigation (startup auto-load, settings enter/back, playback's
+// lv_scr_load(DashDisplay)) keeps working untouched in both styles.
+// Gestures: LEFT/RIGHT swipe = next/prev symbol, LONG PRESS = settings.
+#define VDO_N_FACES 11
+static bool styleAnalog = false;
+static lv_obj_t* vdoGrp = nullptr;
+static VdoFace* vdoFace = nullptr;
+static int vdoIdx = 0;
+
+static VdoFaceSpec vdoSpec(int i) {
+  const bool imp = g_imperial;
+  switch (i % VDO_N_FACES) {
+    case 0:  return {"Rpm", "RPM", "x1000/min", 0, 6500, 100, 500, 1000, 1000, nullptr, nullptr};
+    case 1:  return imp ? VdoFaceSpec{"P_manifold", "BOOST", "PSI", -15, 24, 1, 5, 10, 0, nullptr, "%.1f"}
+                        : VdoFaceSpec{"P_manifold", "BOOST", "kPa", -100, 150, 5, 25, 100, 0, nullptr, nullptr};
+    case 2:  return imp ? VdoFaceSpec{"Bil_hast", "SPEED", "MPH", 0, 160, 5, 20, 40, 0, nullptr, nullptr}
+                        : VdoFaceSpec{"Bil_hast", "SPEED", "kph", 0, 240, 5, 20, 40, 0, nullptr, nullptr};
+    case 3:  return imp ? VdoFaceSpec{"Kyl_temp", "COOLANT", "F", 100, 300, 5, 20, 50, 0, nullptr, nullptr}
+                        : VdoFaceSpec{"Kyl_temp", "COOLANT", "C", 40, 150, 5, 10, 20, 0, nullptr, nullptr};
+    case 4:  return imp ? VdoFaceSpec{"Lufttemp", "INTAKE AIR", "F", -40, 280, 10, 40, 80, 0, nullptr, nullptr}
+                        : VdoFaceSpec{"Lufttemp", "INTAKE AIR", "C", -40, 140, 10, 20, 40, 0, nullptr, nullptr};
+    case 5:  return {"AD_sond", "MIXTURE", "lambda", 0, 1.2f, 0.1f, 0.2f, 0.2f, 0, "%.1f", "%.2f"};
+    case 6:  return {"Medeltrot", "TPS", "%", 0, 100, 2, 10, 20, 0, nullptr, nullptr};
+    case 7:  return {"Ign_angle", "TIMING", "deg", 0, 40, 1, 10, 10, 0, nullptr, "%.1f"};
+    case 8:  return imp ? VdoFaceSpec{"Torque", "TORQUE", "lbft", 0, 450, 25, 50, 100, 0, nullptr, nullptr}
+                        : VdoFaceSpec{"Torque", "TORQUE", "Nm", 0, 600, 25, 50, 100, 0, nullptr, nullptr};
+    case 9:  return {"PWM_ut10", "APC", "%", 0, 100, 2, 10, 20, 0, nullptr, nullptr};
+    default: return {"Batt_volt", "VOLT", "V", 10, 16, 0.2f, 1, 2, 0, "%.0f", "%.1f"};
+  }
+}
+
+static void vdoRebuild(void) {
+  if (vdoFace) { VdoFaceDestroy(vdoFace); vdoFace = nullptr; }
+  if (!vdoGrp) return;
+  const VdoFaceSpec s = vdoSpec(vdoIdx);
+  vdoFace = VdoFaceCreate(vdoGrp, &s);
+}
+
+static void vdo_gesture_cb(lv_event_t* e) {
+  const lv_event_code_t c = lv_event_get_code(e);
+  if (c == LV_EVENT_GESTURE) {
+    const lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (d == LV_DIR_LEFT)       { vdoIdx = (vdoIdx + 1) % VDO_N_FACES; vdoRebuild(); }
+    else if (d == LV_DIR_RIGHT) { vdoIdx = (vdoIdx + VDO_N_FACES - 1) % VDO_N_FACES; vdoRebuild(); }
+  } else if (c == LV_EVENT_LONG_PRESSED) {
+    _ui_screen_change(&ui_SettingsScr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, &ui_SettingsScr_screen_init);
+  }
+}
+
+static void styleApply(void) {
+  if (styleAnalog) {
+    if (!vdoGrp && ui_DashDisplay) {
+      vdoGrp = lv_obj_create(ui_DashDisplay);
+      lv_obj_remove_style_all(vdoGrp);
+      lv_obj_set_size(vdoGrp, 480, 480);
+      lv_obj_set_style_bg_color(vdoGrp, lv_color_black(), 0);
+      lv_obj_set_style_bg_opa(vdoGrp, LV_OPA_COVER, 0);
+      lv_obj_clear_flag(vdoGrp, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_event_cb(vdoGrp, vdo_gesture_cb, LV_EVENT_ALL, nullptr);
+    }
+    if (vdoGrp) {
+      lv_obj_clear_flag(vdoGrp, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_move_foreground(vdoGrp);
+      vdoRebuild();
+    }
+  } else if (vdoGrp) {
+    lv_obj_del(vdoGrp);
+    vdoGrp = nullptr;
+    vdoFace = nullptr;
+  }
+}
+
+static void vdoTick(unsigned long nowMs) {
+  if (!styleAnalog || !vdoGrp || !vdoFace) return;
+  static unsigned long tLast = 0;
+  if (nowMs - tLast < 100) return;
+  tLast = nowMs;
+  if ((nowMs - lastDataMs) > 2500) { VdoFaceStale(vdoFace); return; }
+  const VdoFaceSpec s = vdoSpec(vdoIdx);
+  float v;
+  if (!strcmp(s.id, "Torque")) {
+    const float nm = torqueNmFromBoost(sensorValueFor("P_manifold"));
+    v = dispVal("Torque", nm < 0 ? 0 : nm);
+  } else {
+    v = dispVal(s.id, sensorValueFor(s.id));
+  }
+  VdoFaceSet(vdoFace, v);
+}
+
 // ---- Settings-page wiring (runtime — SquareLine-regen-safe) ----------------
 // The generated ui_events.c stubs (toggleNightMode etc.) come back empty on
 // every SquareLine export, so real behaviour lives HERE and is attached to
@@ -368,6 +462,18 @@ static void unit_cb(lv_event_t*) {
   unitSave();
   unitsLabelsApply();
   updateDisplay();  // repaint now — works even parked with no live stream
+  styleApply();     // rebuild VDO faces if analog (scales/labels are per-unit)
+}
+
+static void style_cb(lv_event_t*) {
+  styleAnalog = lv_obj_has_state(ui_styleToggle, LV_STATE_CHECKED);
+  nvs_handle_t h;
+  if (nvs_open("ui", NVS_READWRITE, &h) == ESP_OK) {
+    nvs_set_u8(h, "style", styleAnalog ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+  }
+  styleApply();
 }
 
 static void nightSave(bool night) {
@@ -415,6 +521,20 @@ static void settingsWiring_init(void) {
     unitsLabelsApply();  // boot in the saved unit system (default: metric)
     lv_obj_add_event_cb(ui_unitToggle, unit_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   }
+
+  // --- Digital/Analog style (checked = right = Analog VDO faces)
+  if (ui_styleToggle) {
+    nvs_handle_t h;
+    uint8_t st = 0;
+    if (nvs_open("ui", NVS_READONLY, &h) == ESP_OK) {
+      nvs_get_u8(h, "style", &st);
+      nvs_close(h);
+    }
+    styleAnalog = st != 0;
+    if (styleAnalog) lv_obj_add_state(ui_styleToggle, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(ui_styleToggle, style_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+  }
+  styleApply();  // build overlay now if booting into analog
 }
 
 void setup() {
@@ -480,6 +600,7 @@ void loop() {
   Lvgl_Loop();
   LogSystem_tick();
   FuelEdu_tick(millis());
+  vdoTick(millis());
 
   unsigned long now = millis();
   if (newDataAvailable && (now - lastUpdate >= updateInterval)) {
