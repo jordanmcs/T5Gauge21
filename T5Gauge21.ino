@@ -122,7 +122,47 @@ static float dispVal(const String& id, float v) {
   if (id == "Lufttemp" || id == "Kyl_temp")
     return nearbyintf(v * 1.8f + 32.0f);                             // degF
   if (id == "P_manifold") return v * 0.145038f;                      // psi (rel.)
+  if (id == "Torque") return g_imperial ? v * 0.7375621f : v;        // Nm -> lb-ft
   return v;  // rpm, V, lambda, %, deg, TQ scalar, gear: unitless/metric-free
+}
+
+// ---- Torque estimate (T5 Suite parity) --------------------------------------
+// TQ symbol is a load SCALAR, not torque. T5 Suite computes its Nm number
+// purely from boost pressure via hardcoded per-turbo tables
+// (CommonSuite/PressureToTorque.cs) — replicated here so the gauge matches
+// Suite to the digit. WOT-shaped: ignores rpm/throttle; below 0.2 bar the
+// engine is not "on the boost" -> show "--" instead of Suite's silent clamp.
+// TORQUE_TURBO picks the MCS/known turbo row set.
+#define TORQUE_TURBO_STOCK 0
+#define TORQUE_TURBO_TD0415T 1
+#define TORQUE_TURBO_TD0419T 2   // also GT28BB/GT28RS per Suite
+#define TORQUE_TURBO_GT3071R 3   // also HX35w per Suite
+#define TORQUE_TURBO_HX40W 4     // also S400SX371 per Suite
+#define TORQUE_TURBO TORQUE_TURBO_STOCK
+
+static const float TQ_X[10] = {0.2f, 0.4f, 0.6f, 0.8f, 1.0f,
+                               1.2f, 1.4f, 1.6f, 1.8f, 2.0f};
+static const float TQ_Y[5][10] = {
+  {160, 210, 240, 270, 300, 360, 410, 440, 450, 460},   // Stock
+  {170, 220, 260, 310, 340, 400, 450, 490, 540, 560},   // TD04-15T
+  {210, 260, 300, 360, 400, 450, 490, 540, 590, 620},   // TD04-19T / GT28
+  {250, 300, 340, 390, 440, 480, 520, 570, 610, 650},   // GT3071R / HX35w
+  {270, 320, 360, 410, 460, 500, 540, 580, 620, 670},   // HX40w / S400SX371
+};
+
+// boost (kPa RELATIVE) -> Nm; -1 = below table floor (not on boost -> "--")
+static float torqueNmFromBoost(float kPaRel) {
+  const float bar = kPaRel / 100.0f;
+  if (bar < TQ_X[0]) return -1.0f;
+  if (bar >= TQ_X[9]) return TQ_Y[TORQUE_TURBO][9];  // clamp at ceiling
+  for (int i = 1; i < 10; i++) {
+    if (bar < TQ_X[i]) {
+      const float f = (bar - TQ_X[i - 1]) / (TQ_X[i] - TQ_X[i - 1]);
+      return TQ_Y[TORQUE_TURBO][i - 1] +
+             f * (TQ_Y[TORQUE_TURBO][i] - TQ_Y[TORQUE_TURBO][i - 1]);
+    }
+  }
+  return TQ_Y[TORQUE_TURBO][9];
 }
 
 void updatePeaks(float& value, const String& id) {
@@ -166,6 +206,20 @@ void updateDisplay() {
     // Update all linked labels
     for (lv_obj_t* label : labelBindings[id].valueLabels) {
       if (label) lv_label_set_text(label, buffer);
+    }
+
+    // Torque page: Suite-parity estimate derived from BOOST (raw bus kPa-rel),
+    // not from the TQ scalar. "--" below 0.2 bar (off-boost / vacuum).
+    if (id == "P_manifold" && uic_torque_value) {
+      static char lastTq[16] = "";
+      const float nm = torqueNmFromBoost(pair.second);
+      char tqb[16];
+      if (nm < 0) snprintf(tqb, sizeof(tqb), "--");
+      else        snprintf(tqb, sizeof(tqb), "%.0f", dispVal("Torque", nm));
+      if (strcmp(tqb, lastTq) != 0) {
+        lv_label_set_text(uic_torque_value, tqb);
+        snprintf(lastTq, sizeof(lastTq), "%s", tqb);
+      }
     }
 
     // 🎯 Update arcs based on sensor ID
@@ -297,6 +351,7 @@ static void unitsLabelsApply(void) {
   lv_label_set_text(uic_boost_unit, g_imperial ? "PSI" : "kPa");
   lv_label_set_text(uic_cts_unit,   g_imperial ? "F"   : "C");
   lv_label_set_text(uic_ait_unit,   g_imperial ? "F"   : "C");
+  lv_label_set_text(uic_torque_unit, g_imperial ? "lbft" : "Nm");
 }
 
 static void unitSave(void) {
@@ -405,7 +460,9 @@ void setup() {
   labelBindings["Medeltrot"].valueLabels.push_back(uic_throttle_value);   //single display
   labelBindings["Bil_hast"].valueLabels.push_back(uic_speed_value);       //single display
   labelBindings["Gear"].valueLabels.push_back(uic_speed_name);            //single display
-  labelBindings["TQ"].valueLabels.push_back(uic_torque_value);            //single display
+  // NOTE: uic_torque_value is NOT bound to the raw TQ scalar (it's a load
+  // number, not torque). The torque page is painted from boost via
+  // torqueNmFromBoost() in updateDisplay() — T5 Suite parity table.
   labelBindings["PWM_ut10"].valueLabels.push_back(uic_APC_value);         //single display — interpreter sends symbolId "PWM_ut10", not "APC"
 
 
