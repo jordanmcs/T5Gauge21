@@ -7,6 +7,10 @@
 #pragma once
 #include <lvgl.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
   const char* id;      // sensorMap symbol id, or "Torque" for the derived one
   const char* name;    // top legend, e.g. "TURBO"
@@ -29,3 +33,9 @@ void VdoFaceDestroy(VdoFace* f);
 void VdoFaceSet(VdoFace* f, float value);
 // Stream stale: readout shows "--", needle holds (VDO-behavior).
 void VdoFaceStale(VdoFace* f);
+// Debug dump of needle geometry (diagnostics only).
+void VdoFaceDbg(const VdoFace* f);
+
+#ifdef __cplusplus
+}
+#endif

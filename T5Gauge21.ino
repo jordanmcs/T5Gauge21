@@ -378,7 +378,9 @@ static void vdoRebuild(void) {
   if (vdoFace) { VdoFaceDestroy(vdoFace); vdoFace = nullptr; }
   if (!vdoGrp) return;
   const VdoFaceSpec s = vdoSpec(vdoIdx);
+  printf("VDO: building '%s' idx=%d\n", s.name, vdoIdx);
   vdoFace = VdoFaceCreate(vdoGrp, &s);
+  printf("VDO: built -> %p\n", (void*)vdoFace);
 }
 
 static void vdo_gesture_cb(lv_event_t* e) {
@@ -541,7 +543,8 @@ static void settingsWiring_init(void) {
       nvs_get_u8(h, "style", &st);
       nvs_close(h);
     }
-    styleAnalog = st != 0;
+    printf("BOOT: style nvs=%u\n", (unsigned)st);
+    styleAnalog = (st == 1);
     if (styleAnalog) lv_obj_add_state(ui_styleToggle, LV_STATE_CHECKED);
     lv_obj_add_event_cb(ui_styleToggle, style_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   }
@@ -554,22 +557,33 @@ void setup() {
 
   Serial.begin(115200);
   //while(!Serial) delay(10);
+  delay(50);
+  // NOTE: on this board printf() goes to the native USB port (USB-Serial-JTAG)
+  // while Serial.* goes to UART0 silicon (nothing attached). Log with printf!
+  printf("\nBOOT: reset=%d\n", (int)esp_reset_reason());
   WiFi_init();
+  printf("INIT: wifi\n");
   I2C_Init();
   TCA9554PWR_Init(0x00);
   Set_EXIO(EXIO_PIN8, Low);
   PCF85063_Init();
+  printf("INIT: rtc\n");
   LCD_Init();
+  printf("INIT: lcd\n");
   Lvgl_Init();
+  printf("INIT: lvgl\n");
   ui_init();
+  printf("BOOT: ui ok\n");
 
 
   // set 100% to start
   Set_Backlight(100);
 
   settingsWiring_init();  // Day/Night switch (may dim per saved setting)
+  printf("BOOT: wiring ok\n");
   LogSystem_init(logFeed);  // adds LOGGER button to Settings screen
   FuelEdu_init();           // appends "mpg" swipe page after the clock
+  printf("BOOT: subsystems ok\n");
 
 
   // set label bindings for incoming JSON messages
@@ -608,6 +622,8 @@ unsigned long lastClockUpdate = 0;
 const unsigned long updateInterval = 50;  // ms
 
 void loop() {
+  static bool firstLoop = true;
+  if (firstLoop) { firstLoop = false; printf("BOOT: loop entered\n"); }
   Lvgl_Loop();
   LogSystem_tick();
   FuelEdu_tick(millis());

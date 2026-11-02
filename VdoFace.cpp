@@ -7,6 +7,7 @@
 #include "VdoFace.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CX 240.0f
@@ -109,11 +110,16 @@ static void setPointer(VdoFace* f, float v) {
   }
 }
 
-static void sizeNeedle(lv_obj_t* line, float rOut, float width) {
-  const float half = rOut + width;
+static int sizeNeedle(lv_obj_t* line, float rOut, float width) {
+  // integer half => pivot pixel lands exactly on (CX,CY); float halves
+  // truncated 0.75px up-left of the hub (visible pivot wobble).
+  // RETURNS the half actually used — setPointer MUST pivot on this exact
+  // value (a second formula desynced pivot vs placement by one width).
+  const int half = (int)(rOut + width + 0.5f);
   lv_obj_set_size(line, (lv_coord_t)(2 * half), (lv_coord_t)(2 * half));
   lv_obj_set_pos(line, (lv_coord_t)(CX - half), (lv_coord_t)(CY - half));
   lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  return half;
 }
 
 VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
@@ -130,27 +136,29 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
   lv_obj_set_style_bg_opa(f->g, LV_OPA_COVER, 0);
   lv_obj_t* g = f->g;
 
-  // tick ring: minor + major ticks, index math (no float accumulation)
-  const int nMinor = (int)((spec->max - spec->min) / spec->minor + 0.5f);
-  for (int i = 0; i <= nMinor; i++) {
+  // tick ring: minor + major ticks. Angle from VALUE, not loop index —
+  // when (max-min)/step is fractional, index math drifts the ring vs the
+  // needle scale (this is what desynced numerals from hash marks).
+  for (int i = 0; ; i++) {
     const float v = spec->min + spec->minor * i;
+    if (v > spec->max + 1e-3f) break;
     const bool major = spec->major > 0 &&
       (fabsf((v - spec->min) / spec->major - nearbyintf((v - spec->min) / spec->major)) < 1e-3f);
-    const float cw = VDOSTART + VADOSPAN * ((float)i / nMinor);
+    const float cw = faceAngleOf(spec, v);
     makeTick(g, cw, 0.94f * R_FACE,
              major ? 0.78f * R_FACE : 0.885f * R_FACE, major ? 3 : 1, white);
   }
-  // numerals
+  // numerals — also placed by value angle, so "3" sits exactly on 3000's
+  // radial whatever the max is
   if (spec->numStep > 0) {
-    const int nNum = (int)((spec->max - spec->min) / spec->numStep + 0.5f);
-    for (int i = 0; i <= nNum; i++) {
+    for (int i = 0; ; i++) {
       const float v = spec->min + spec->numStep * i;
+      if (v > spec->max + 1e-3f) break;
       char buf[12];
       fmtNum(buf, sizeof(buf), spec->numFmt,
              spec->numDiv > 0 ? v / spec->numDiv : v);
       lv_obj_t* n = makeTextCol(g, buf, &lv_font_montserrat_16, white);
-      placeLabel(n, 0.62f * R_FACE,
-                 VDOSTART + VADOSPAN * ((float)i / nNum));
+      placeLabel(n, 0.62f * R_FACE, faceAngleOf(spec, v));
     }
   }
 
@@ -159,11 +167,12 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
   lv_obj_t* unitL = makeTextCol(g, spec->unit, &lv_font_montserrat_16, white);
   lv_obj_align(unitL, LV_ALIGN_CENTER, 0, 0.30f * R_FACE);
 
-  // readout between the screws; fixed width + centered => never floats
+  // readout between the screws; fixed width + centered => never floats.
+  // Screws share the readout's Y (VDO: screws flank the window, not above it)
   f->valueLbl = makeTextCol(g, "--", &lv_font_montserrat_24, white);
-  lv_obj_set_width(f->valueLbl, 110);  // screw gap ≈ 118 px at 480 res
+  lv_obj_set_width(f->valueLbl, 110);
   lv_obj_set_style_text_align(f->valueLbl, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(f->valueLbl, LV_ALIGN_CENTER, 0, 0.62f * R_FACE);
+  lv_obj_align(f->valueLbl, LV_ALIGN_CENTER, 0, 0.55f * R_FACE);
 
   for (int s = -1; s <= 1; s += 2) {   // slotted screws
     lv_obj_t* screw = lv_obj_create(g);
@@ -173,7 +182,7 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
     lv_obj_set_style_bg_color(screw, lv_color_hex(0x444444), 0);
     lv_obj_set_style_border_width(screw, 1, 0);
     lv_obj_set_style_border_color(screw, lv_color_hex(0x666666), 0);
-    lv_obj_align(screw, LV_ALIGN_CENTER, s * 0.26f * R_FACE, 0.50f * R_FACE);
+    lv_obj_align(screw, LV_ALIGN_CENTER, s * 0.30f * R_FACE, 0.55f * R_FACE);
     lv_obj_t* slot = lv_obj_create(screw);
     lv_obj_set_size(slot, 8, 1);
     lv_obj_clear_flag(slot, LV_OBJ_FLAG_CLICKABLE);
@@ -205,10 +214,9 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
     lv_obj_set_style_line_color(l, lv_color_hex(parts[i].hex), LV_PART_MAIN);
     lv_obj_set_style_line_opa(l, parts[i].opa, LV_PART_MAIN);
     lv_obj_set_style_line_rounded(l, true, LV_PART_MAIN);
-    sizeNeedle(l, 0.85f * R_FACE + f->needleW, f->needleW);
+    f->needleHalf = (float)sizeNeedle(l, 0.85f * R_FACE + f->needleW, f->needleW);
     *parts[i].slot = l;
   }
-  f->needleHalf = 0.85f * R_FACE + f->needleW;   // pivot for setPointer (no layout needed)
   setPointer(f, spec->min);
   return f;
 }
@@ -230,6 +238,16 @@ void VdoFaceStale(VdoFace* f) {
     lv_label_set_text(f->valueLbl, "--");
     snprintf(f->lastTxt, sizeof(f->lastTxt), "%s", "--");
   }
+}
+
+void VdoFaceDbg(const VdoFace* f) {
+  if (!f) return;
+  printf("DBG face '%s': nBase pos=(%d,%d) size=(%d,%d) half=%.1f pts: (%d,%d)-(%d,%d)\n",
+         f->spec.name, (int)lv_obj_get_x((lv_obj_t*)f->nBase), (int)lv_obj_get_y((lv_obj_t*)f->nBase),
+         (int)lv_obj_get_width((lv_obj_t*)f->nBase), (int)lv_obj_get_height((lv_obj_t*)f->nBase),
+         f->needleHalf,
+         (int)f->nPts[0].x, (int)f->nPts[0].y, (int)f->nPts[1].x, (int)f->nPts[1].y);
+  fflush(stdout);
 }
 
 void VdoFaceDestroy(VdoFace* f) {
