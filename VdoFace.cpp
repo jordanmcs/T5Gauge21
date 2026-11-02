@@ -29,6 +29,7 @@ struct VdoFace {
   lv_obj_t* nShadow; lv_point_t sPts[2];
   lv_obj_t* nHi; lv_point_t hPts[2];
   int needleW;
+  float needleHalf;      // half-size of the needle objects (pivot offset)
   char lastTxt[16];
 };
 
@@ -65,11 +66,13 @@ static lv_obj_t* makeTextCol(lv_obj_t* parent, const char* txt,
   lv_obj_set_style_text_font(l, font, 0);
   lv_obj_set_style_text_color(l, col, 0);
   lv_label_set_text(l, txt);
+  // never eat touch: presses must land on the parent (gesture target)
+  lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   return l;
 }
 
 static void fmtNum(char* buf, size_t n, const char* fmt, float v) {
-  if (!fmt || strcmp(fmt, "%d") == 0) snprintf(buf, n, "%d", (int)(v + 0.5f));
+  if (!fmt || strcmp(fmt, "%d") == 0) snprintf(buf, n, "%d", (int)nearbyintf(v));
   else snprintf(buf, n, fmt, (double)v);
 }
 
@@ -86,7 +89,7 @@ static void setPointer(VdoFace* f, float v) {
   const float sx = sinf(rad), sy = -cosf(rad);
   const float px = -sy, py = sx;                 // unit perpendicular
   const float rOut = 0.85f * R_FACE, rTail = 0.18f * R_FACE;
-  const float piv = (float)lv_obj_get_width(f->nBase) / 2.0f;
+  const float piv = f->needleHalf;               // stored: get_width is 0 pre-layout!
   f->nPts[0].x = (lv_coord_t)(piv - sx * rTail); f->nPts[0].y = (lv_coord_t)(piv - sy * rTail);
   f->nPts[1].x = (lv_coord_t)(piv + sx * rOut);  f->nPts[1].y = (lv_coord_t)(piv + sy * rOut);
   lv_line_set_points(f->nBase, f->nPts, 2);
@@ -165,7 +168,7 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
   for (int s = -1; s <= 1; s += 2) {   // slotted screws
     lv_obj_t* screw = lv_obj_create(g);
     lv_obj_set_size(screw, 13, 13);
-    lv_obj_clear_flag(screw, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(screw, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(screw, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(screw, lv_color_hex(0x444444), 0);
     lv_obj_set_style_border_width(screw, 1, 0);
@@ -173,6 +176,7 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
     lv_obj_align(screw, LV_ALIGN_CENTER, s * 0.26f * R_FACE, 0.50f * R_FACE);
     lv_obj_t* slot = lv_obj_create(screw);
     lv_obj_set_size(slot, 8, 1);
+    lv_obj_clear_flag(slot, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(slot, lv_color_hex(0x999999), 0);
     lv_obj_set_style_border_width(slot, 0, 0);
     lv_obj_set_style_radius(slot, 0, 0);
@@ -181,7 +185,7 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
 
   lv_obj_t* hub = lv_obj_create(g);    // silver hub (drawn under needle? no—above)
   lv_obj_set_size(hub, 24, 24);
-  lv_obj_clear_flag(hub, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(hub, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_radius(hub, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(hub, lv_color_hex(0xb8b8b8), 0);
   lv_obj_set_style_border_width(hub, 1, 0);
@@ -204,6 +208,7 @@ VdoFace* VdoFaceCreate(lv_obj_t* parent, const VdoFaceSpec* spec) {
     sizeNeedle(l, 0.85f * R_FACE + f->needleW, f->needleW);
     *parts[i].slot = l;
   }
+  f->needleHalf = 0.85f * R_FACE + f->needleW;   // pivot for setPointer (no layout needed)
   setPointer(f, spec->min);
   return f;
 }

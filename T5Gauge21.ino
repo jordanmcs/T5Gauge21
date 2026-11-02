@@ -400,6 +400,9 @@ static void styleApply(void) {
       lv_obj_set_style_bg_color(vdoGrp, lv_color_black(), 0);
       lv_obj_set_style_bg_opa(vdoGrp, LV_OPA_COVER, 0);
       lv_obj_clear_flag(vdoGrp, LV_OBJ_FLAG_SCROLLABLE);
+      // consume gestures here: don't let them bubble to DashDisplay's own
+      // swipe handlers (up = SingleScr, left = Settings) behind our back
+      lv_obj_clear_flag(vdoGrp, LV_OBJ_FLAG_GESTURE_BUBBLE);
       lv_obj_add_event_cb(vdoGrp, vdo_gesture_cb, LV_EVENT_ALL, nullptr);
     }
     if (vdoGrp) {
