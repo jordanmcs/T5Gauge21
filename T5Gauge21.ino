@@ -349,7 +349,8 @@ void WiFi_init(void) {
 static bool styleAnalog = false;
 static lv_obj_t* vdoGrp = nullptr;
 static VdoFace* vdoFace = nullptr;
-static int vdoIdx = 0;
+static int vdoIdx = 0;   // face builds deferred to vdoTick: building faces over a
+                         // never-laid-out (or inactive) screen hangs LVGL layout
 
 static VdoFaceSpec vdoSpec(int i) {
   const bool imp = g_imperial;
@@ -408,7 +409,10 @@ static void styleApply(void) {
     if (vdoGrp) {
       lv_obj_clear_flag(vdoGrp, LV_OBJ_FLAG_HIDDEN);
       lv_obj_move_foreground(vdoGrp);
-      vdoRebuild();
+      // NEVER build the face here: styleApply can run while another screen
+      // (or the never-laid-out DashDisplay at boot) is active, and face
+      // construction touches layout. vdoTick builds it when DashDisplay is up.
+      if (vdoFace) { VdoFaceDestroy(vdoFace); vdoFace = nullptr; }
     }
   } else if (vdoGrp) {
     lv_obj_del(vdoGrp);
@@ -418,7 +422,11 @@ static void styleApply(void) {
 }
 
 static void vdoTick(unsigned long nowMs) {
-  if (!styleAnalog || !vdoGrp || !vdoFace) return;
+  if (!styleAnalog || !vdoGrp) return;
+  if (!vdoFace) {
+    if (lv_scr_act() == ui_DashDisplay) vdoRebuild();  // safe: laid out + visible
+    return;
+  }
   static unsigned long tLast = 0;
   if (nowMs - tLast < 100) return;
   tLast = nowMs;
