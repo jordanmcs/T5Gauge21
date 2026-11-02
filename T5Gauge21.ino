@@ -108,6 +108,23 @@ void updateClockLabels() {
   lv_label_set_text(uic_clock_unit, isPM ? "PM" : "AM");
 }
 
+// ---- Metric/Imperial --------------------------------------------------------
+// sensorMap stays in BUS domain (metric) always — logger, playback and the
+// FuelEdu trip read it raw. Conversion happens ONLY at the display edge, so
+// flipping units mid-log never corrupts recorded or integrated data.
+// (Declared here because updateDisplay() consumes it; toggle plumbing lives
+// in the settings-wiring section near setup().)
+static bool g_imperial = false;
+
+static float dispVal(const String& id, float v) {
+  if (!g_imperial) return v;
+  if (id == "Bil_hast") return nearbyintf(v * 0.621371f);            // mph
+  if (id == "Lufttemp" || id == "Kyl_temp")
+    return nearbyintf(v * 1.8f + 32.0f);                             // degF
+  if (id == "P_manifold") return v * 0.145038f;                      // psi (rel.)
+  return v;  // rpm, V, lambda, %, deg, TQ scalar, gear: unitless/metric-free
+}
+
 void updatePeaks(float& value, const String& id) {
   if (id == "Lufttemp") {  // replace with your actual sensor ID for air temp
     if (value > peakAirTemp) {
@@ -122,17 +139,18 @@ void updatePeaks(float& value, const String& id) {
 void updatePeakLabels() {
   char buf[16];
 
-  snprintf(buf, sizeof(buf), "%.1f", peakAirTemp);
+  // peaks stored in bus metric; convert for display only
+  snprintf(buf, sizeof(buf), "%.1f", dispVal("Lufttemp", peakAirTemp));
   lv_label_set_text(ui_aitmaxValLbl, buf);
 
-  snprintf(buf, sizeof(buf), "%.1f", peakBoostPressure);
+  snprintf(buf, sizeof(buf), "%.1f", dispVal("P_manifold", peakBoostPressure));
   lv_label_set_text(ui_boostmaxValLbl, buf);
 }
 
 void updateDisplay() {
   for (const auto& pair : sensorMap) {
     const String& id = pair.first;
-    float value = pair.second;
+    float value = dispVal(id, pair.second);  // bus-metric -> displayed units
 
     if (!labelBindings.count(id)) continue;
     //aitmaxValLbl
@@ -270,8 +288,32 @@ void WiFi_init(void) {
 // every SquareLine export, so real behaviour lives HERE and is attached to
 // the switches directly — same precedent as LogSystem's LOGGER button.
 #include <nvs.h>
+#include <math.h>
 #define BL_DAY    100  // current behaviour
 #define BL_NIGHT   25  // first guess — Jordan tunes by eye
+
+static void unitsLabelsApply(void) {
+  lv_label_set_text(uic_speed_unit, g_imperial ? "MPH" : "kph");
+  lv_label_set_text(uic_boost_unit, g_imperial ? "PSI" : "kPa");
+  lv_label_set_text(uic_cts_unit,   g_imperial ? "F"   : "C");
+  lv_label_set_text(uic_ait_unit,   g_imperial ? "F"   : "C");
+}
+
+static void unitSave(void) {
+  nvs_handle_t h;
+  if (nvs_open("ui", NVS_READWRITE, &h) == ESP_OK) {
+    nvs_set_u8(h, "imp", g_imperial ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+  }
+}
+
+static void unit_cb(lv_event_t*) {
+  g_imperial = lv_obj_has_state(ui_unitToggle, LV_STATE_CHECKED);
+  unitSave();
+  unitsLabelsApply();
+  updateDisplay();  // repaint now — works even parked with no live stream
+}
 
 static void nightSave(bool night) {
   nvs_handle_t h;
@@ -289,19 +331,35 @@ static void night_cb(lv_event_t*) {
 }
 
 static void settingsWiring_init(void) {
-  if (!ui_nightMode) return;
-  nvs_handle_t h;
-  uint8_t night = 0;
-  if (nvs_open("ui", NVS_READONLY, &h) == ESP_OK) {
-    nvs_get_u8(h, "night", &night);
-    nvs_close(h);
+  // --- Day/Night
+  if (ui_nightMode) {
+    nvs_handle_t h;
+    uint8_t night = 0;
+    if (nvs_open("ui", NVS_READONLY, &h) == ESP_OK) {
+      nvs_get_u8(h, "night", &night);
+      nvs_close(h);
+    }
+    // restore BEFORE attaching the cb so boot doesn't re-save
+    if (night) {
+      lv_obj_add_state(ui_nightMode, LV_STATE_CHECKED);
+      Set_Backlight(BL_NIGHT);
+    }
+    lv_obj_add_event_cb(ui_nightMode, night_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   }
-  // restore BEFORE attaching the cb so boot doesn't re-save
-  if (night) {
-    lv_obj_add_state(ui_nightMode, LV_STATE_CHECKED);
-    Set_Backlight(BL_NIGHT);
+
+  // --- Metric/Imperial (checked = right = Imperial)
+  if (ui_unitToggle) {
+    nvs_handle_t h;
+    uint8_t imp = 0;
+    if (nvs_open("ui", NVS_READONLY, &h) == ESP_OK) {
+      nvs_get_u8(h, "imp", &imp);
+      nvs_close(h);
+    }
+    g_imperial = imp != 0;
+    if (g_imperial) lv_obj_add_state(ui_unitToggle, LV_STATE_CHECKED);
+    unitsLabelsApply();  // boot in the saved unit system (default: metric)
+    lv_obj_add_event_cb(ui_unitToggle, unit_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   }
-  lv_obj_add_event_cb(ui_nightMode, night_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 }
 
 void setup() {
