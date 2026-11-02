@@ -266,10 +266,10 @@ static void play_stop(const char* why) {
   setStatus(why);
 }
 
-// FuelEdu trip reset — playback must start from a clean prior so bench/test
-// logs can't pollute the real driving trip. Declared here (not via FuelEdu.h)
-// to keep LogSystem independent of the EDU UI module.
-void FuelEdu_resetTrip(void);
+// FuelEdu playback sandbox — playback must start from a clean prior AND never
+// write NVS, so bench/test logs can't pollute the real driving trip.
+// Declared here (not via FuelEdu.h) to keep LogSystem's includes light.
+void FuelEdu_beginSandbox(void);
 // Blanks design-time placeholder values on all data pages (T5Gauge21.ino)
 void clearDisplayPlaceholders(void);
 
@@ -279,7 +279,7 @@ static bool play_start() {
   playFile = SD_MMC.open(files[selFile].path, FILE_READ);
   if (!playFile) { setStatus("Open failed"); return false; }
   if (!hdr_read()) { playFile.close(); setStatus("Bad CSV header"); return false; }
-  FuelEdu_resetTrip();        // fresh prior for this playback
+  FuelEdu_beginSandbox();     // clean prior, NVS protected for this playback
   clearDisplayPlaceholders(); // "--" everywhere; only logged columns overwrite
   playStartMs = millis(); curDueMs = 0; rowLoaded = false;
   playT0ms = 0; playFirstRow = true;   // anchor pacing to FIRST row's timestamp

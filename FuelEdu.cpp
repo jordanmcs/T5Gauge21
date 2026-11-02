@@ -82,6 +82,27 @@ static uint32_t blobSum(const TripBlob& b) {
 
 static float s_lastSaveTrip = -1.0f;
 
+static void tripSave(void);
+static bool tripLoad(void);
+static void seedRing(void);
+
+static bool s_sandbox = false;   // playback mode: never touch NVS
+
+bool LogSystem_playbackActive();  // LogSystem.cpp (playback vs live ingest)
+
+void FuelEdu_beginSandbox(void) {
+  tripSave();                    // flush the REAL trip to NVS before overriding display
+  seedRing();
+  s_tripMi = 0;
+  s_lastSaveTrip = 0;
+  s_sandbox = true;
+}
+
+static void endSandbox(void) {
+  tripLoad();                    // restore the real trip from NVS
+  s_sandbox = false;
+}
+
 static void tripSave(void) {
   TripBlob b = {};
   b.magic = TRIP_MAGIC;
@@ -167,7 +188,7 @@ static void avg_reset_cb(lv_event_t*) { FuelEdu_resetTrip(); }
 void FuelEdu_resetTrip(void) {
   seedRing();
   s_tripMi = 0;   // trip odometer resets with the avg window
-  tripSave();     // reset must survive the next power-down too
+  if (!s_sandbox) tripSave();   // reset must survive power-down — but playback resets stay in RAM
   // visible feedback: gold for 800 ms, one-shot timer restores theme green
   if (!avgLbl) return;
   lv_obj_set_style_text_color(avgLbl, lv_color_hex(0xDEB600), 0);
@@ -260,6 +281,9 @@ void FuelEdu_init(void) {
 void FuelEdu_tick(unsigned long nowMs) {
   if (!page) return;
 
+  // playback stopped? the real trip (untouched in NVS) comes back
+  if (s_sandbox && !LogSystem_playbackActive()) endSandbox();
+
   unsigned long dtms = haveT ? (nowMs - tLast) : 0;
   tLast = nowMs;
   haveT = true;
@@ -277,10 +301,12 @@ void FuelEdu_tick(unsigned long nowMs) {
     const int headBefore = head;
     ringAdd(galRate * (dtms / 3600000.0f), dMi);
     s_tripMi += dMi;
-    // persist once per completed cell / quarter mile of travel
-    if (headBefore != head ||
-        (s_lastSaveTrip < 0 ? s_tripMi >= 0.25f
-                            : s_tripMi - s_lastSaveTrip >= 0.25f))
+    // persist once per completed cell / quarter mile of travel — NEVER during
+    // playback (sandbox): a demo log must not pollute the real trip
+    if (!s_sandbox &&
+        (headBefore != head ||
+         (s_lastSaveTrip < 0 ? s_tripMi >= 0.25f
+                             : s_tripMi - s_lastSaveTrip >= 0.25f)))
       tripSave();
 
     const float a = dtms / (TAU_MS + dtms);         // EMA, dt-correct

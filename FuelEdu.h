@@ -16,4 +16,9 @@ void FuelEdu_tick(unsigned long nowMs);
 // Reseed the trip average to the prior (same as long-press on the avg line).
 void FuelEdu_resetTrip(void);
 
+// Enter/exit playback sandbox: real trip is flushed to NVS, display gets a
+// fresh seeded session that never writes flash, and the real trip is restored
+// from NVS when playback stops.
+void FuelEdu_beginSandbox(void);
+
 #endif
